@@ -1,0 +1,36 @@
+services:
+  database:
+    image: pgvector/pgvector:0.8.6-pg18
+    container_name: ai-employee-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ai_employee
+      POSTGRES_USER: ai_employee_user
+      POSTGRES_PASSWORD: ${DOCKER_POSTGRES_PASSWORD}
+
+    ports:
+      # Your existing Windows PostgreSQL already uses 5432.
+      # So Docker exposes this database on Windows as port 5433.
+      - "5433:5432"
+
+    volumes:
+      # Persistent Docker-managed database storage.
+      - ai_employee_pgdata:/var/lib/postgresql
+      # Runs only when the database volume is first initialized.
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ai_employee_user -d ai_employee"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  ai_employee_pgdata:
+    name: ai_employee_pgdata

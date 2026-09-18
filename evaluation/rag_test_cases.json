@@ -1,0 +1,34 @@
+[
+  {
+    "query": "What rules should our sales outreach emails follow?",
+    "expected_file": "sales_playbook.txt"
+  },
+  {
+    "query": "How much does an enterprise RAG project cost?",
+    "expected_file": "pricing.txt"
+  },
+  {
+    "query": "What AI automation services do we provide?",
+    "expected_file": "services.txt"
+  },
+  {
+    "query": "Have we previously built a system for searching thousands of internal documents?",
+    "expected_file": "case_study.txt"
+  },
+  {
+    "query": "What should we avoid claiming when contacting prospects?",
+    "expected_file": "sales_playbook.txt"
+  },
+  {
+    "query": "What type of companies are a strong customer fit for us?",
+    "expected_file": "services.txt"
+  },
+  {
+    "query": "What is the typical price range for an enterprise AI agent?",
+    "expected_file": "pricing.txt"
+  },
+  {
+    "query": "Have we automated repetitive administrative workflows before?",
+    "expected_file": "case_study.txt"
+  }
+]

@@ -1,0 +1,65 @@
+# ==============================
+# Python
+# ==============================
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==============================
+# Environment / secrets
+# ==============================
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+credentials.json
+token.json
+
+# ==============================
+# IDE
+# ==============================
+.vscode/
+.idea/
+
+# ==============================
+# Logs
+# ==============================
+logs/
+*.log
+
+# ==============================
+# RAG uploaded/private files
+# ==============================
+knowledge/uploads/
+
+# ==============================
+# Frontend
+# ==============================
+frontend/node_modules/
+frontend/dist/
+node_modules/
+dist/
+
+# ==============================
+# Coverage
+# ==============================
+.coverage
+coverage/
+htmlcov/
+
+# ==============================
+# Temporary backup
+# ==============================
+.gitignore_backup/
+
+# ==============================
+# OS
+# ==============================
+.DS_Store
+Thumbs.db
