@@ -1,0 +1,168 @@
+services:
+  database:
+    image: pgvector/pgvector:0.8.6-pg18
+    container_name: ai-employee-db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ai_employee
+      POSTGRES_USER: ai_employee_user
+      POSTGRES_PASSWORD: ${DOCKER_POSTGRES_PASSWORD}
+
+    volumes:
+      - ai_employee_pgdata:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ai_employee_user -d ai_employee"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+
+  init-backend:
+    image: ghcr.io/${GHCR_OWNER}/autonomous-ai-backend:${IMAGE_TAG:-latest}
+
+    env_file:
+      - .env.production
+
+    environment:
+      DB_HOST: database
+      DB_PORT: "5432"
+      DB_NAME: ai_employee
+      DB_USER: ai_employee_user
+      DB_PASSWORD: ${DOCKER_POSTGRES_PASSWORD}
+      AUTH_COOKIE_SECURE: "true"
+
+    depends_on:
+      database:
+        condition: service_healthy
+
+    command:
+      - python
+      - -c
+      - |
+        from app.database import create_tables, test_connection
+        from app.checkpoint import setup_checkpointer
+
+        print("[INIT] Database:", test_connection())
+        create_tables()
+        print("[INIT] SQLAlchemy tables ready")
+        setup_checkpointer()
+        print("[INIT] LangGraph checkpoint tables ready")
+
+    restart: "no"
+
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER}/autonomous-ai-backend:${IMAGE_TAG:-latest}
+    container_name: ai-employee-backend
+    restart: unless-stopped
+
+    env_file:
+      - .env.production
+
+    environment:
+      DB_HOST: database
+      DB_PORT: "5432"
+      DB_NAME: ai_employee
+      DB_USER: ai_employee_user
+      DB_PASSWORD: ${DOCKER_POSTGRES_PASSWORD}
+      AUTH_COOKIE_SECURE: "true"
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      - ai_employee_logs:/app/logs
+      - ai_employee_knowledge:/app/knowledge/uploads
+      - ai_employee_hf_cache:/app/.cache/huggingface
+
+    depends_on:
+      database:
+        condition: service_healthy
+      init-backend:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/autonomous-ai-frontend:${IMAGE_TAG:-latest}
+    container_name: ai-employee-frontend
+    restart: unless-stopped
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1/"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ai-employee-caddy
+    restart: unless-stopped
+
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+
+volumes:
+  ai_employee_pgdata:
+    name: ai_employee_pgdata
+
+  ai_employee_logs:
+    name: ai_employee_logs
+
+  ai_employee_knowledge:
+    name: ai_employee_knowledge
+
+  ai_employee_hf_cache:
+    name: ai_employee_hf_cache
+
+  caddy_data:
+    name: ai_employee_caddy_data
+
+  caddy_config:
+    name: ai_employee_caddy_config
