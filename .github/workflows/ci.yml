@@ -85,7 +85,7 @@ jobs:
 
       - name: Run backend tests
         run: |
-          pytest -q
+          python -m pytest -q
 
 
   frontend-build:
@@ -132,3 +132,5 @@ jobs:
             --build-arg VITE_API_BASE_URL=/api \
             -t autonomous-ai-frontend:ci \
             ./frontend
+
+
