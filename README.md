@@ -492,8 +492,6 @@ This project demonstrates practical experience with:
 
 ---
 
-## Author
-
-**Mishal Fayyaz**
+## Project note
 
 Built as a portfolio project exploring how autonomous AI agents can combine private enterprise knowledge, public research, deterministic business logic, and human oversight in a real workflow.
