@@ -1,497 +1,264 @@
 # Autonomous AI Employee
 
-An end-to-end autonomous business-development agent that researches prospect companies, retrieves relevant private company knowledge, scores opportunities, drafts personalized outreach, and requires human approval before email delivery.
+> Evidence-grounded autonomous business-development agent with private RAG, deterministic lead scoring, security guardrails, and human approval before outbound email.
 
-The project combines **agent orchestration, retrieval-augmented generation (RAG), web research, deterministic lead scoring, security guardrails, human-in-the-loop approval, observability, Docker, and CI/CD** in one working application.
+[![CI](https://github.com/mishal913/autonomous-ai-employee/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mishal913/autonomous-ai-employee/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-TypeScript-61DAFB?logo=react&logoColor=111827)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
----
+## Recruiter quick scan
 
-## Why this project exists
+| Area | Implementation |
+|---|---|
+| Agent orchestration | LangGraph state machine with persistence, conditional routing, and human-in-the-loop interruption |
+| Reasoning | Mistral through an OpenAI-compatible xKiro endpoint |
+| Public research | Tavily web research |
+| Private knowledge | RAG over TXT/MD/PDF using sentence-transformers + PostgreSQL/pgvector |
+| Qualification | Five constrained 0-20 criteria; Python validates and deterministically totals 0-100 |
+| Safety | Prompt-injection scanning, untrusted-evidence isolation, RAG evidence gate, approval gate, send validation |
+| Product layer | React + TypeScript dashboard, Knowledge Base CRUD, live execution trace, observability |
+| Infrastructure | Docker Compose, PostgreSQL 18 + pgvector, Nginx frontend, GitHub Actions, GHCR publishing workflow |
 
-A business-development workflow usually requires several disconnected steps:
+## What the system does
 
-1. Research a company.
-2. Understand whether the prospect has a real business need.
-3. Compare that need with the seller's actual capabilities.
-4. Decide whether the opportunity is worth pursuing.
-5. Draft personalized outreach.
-6. Review the message before sending it.
-7. Preserve the workflow state and audit trail.
+The agent researches a prospect, retrieves relevant private company knowledge, connects the prospect's evidence-supported needs to capabilities the seller can actually provide, scores the opportunity, drafts personalized outreach, and pauses before the Gmail side effect for explicit human approval.
 
-This project automates that process while keeping an explicit **human approval gate** before outbound email.
+A key rule is enforced in code:
 
-A core design rule is:
+> **No relevant private company knowledge -> no seller-prospect fit score, no outreach draft, and no send path.**
 
-> The agent does not simply match a prospect's services to our services. It asks what our AI company can actually do to address an evidence-supported need at the prospect.
-
----
-
-## Key capabilities
-
-- **Autonomous prospect research** using Tavily web search
-- **Private RAG knowledge base** for internal services, capabilities, case studies, pricing, and sales playbooks
-- **Mistral-based reasoning** over public prospect evidence + private company knowledge
-- **Hard RAG evidence gate**: no private knowledge means no seller-prospect fit score, no outreach draft, and no send path
-- **Five-component lead scoring** with a deterministic Python total
-- **Human-in-the-loop approval** before Gmail delivery
-- **Knowledge Base CRUD** with upload, edit, re-index, and delete flows
-- **LangGraph checkpointing** for resumable workflow state
-- **Prompt-injection defenses** for untrusted web content
-- **Authentication and role-aware protected routes**
-- **Operational observability** for workflow stages and failures
-- **Dockerized full stack** with PostgreSQL + pgvector
-- **GitHub Actions CI** for backend tests, frontend builds, and frontend Docker builds
-- **GHCR publishing workflow** for tagged container images
-
----
+This prevents the system from treating public prospect information alone as proof that the seller can solve the prospect's problem.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    U[User / Operator] --> UI[React + Vite Dashboard]
-    UI --> API[FastAPI Backend]
+flowchart LR
+    U[Operator] --> UI[React / TypeScript UI]
+    UI --> API[FastAPI]
+    API --> LG[LangGraph]
 
-    API --> LG[LangGraph Workflow]
+    LG --> MEM[(Business memory)]
+    LG --> WEB[Tavily web research]
+    LG --> RAG[Private RAG retrieval]
 
-    LG --> M[Business Memory / PostgreSQL]
-    LG --> T[Tavily Web Research]
-    LG --> RAG[Private Knowledge Retrieval]
-
-    RAG --> EMB[Sentence Transformers\nall-MiniLM-L6-v2]
+    RAG --> EMB[all-MiniLM-L6-v2]
     EMB --> PG[(PostgreSQL + pgvector)]
 
-    T --> SEC[Security Guardrails]
-    RAG --> GATE{Relevant private\nknowledge found?}
-
-    GATE -- No --> STOP[Block workflow and request\nKnowledge Base evidence]
-    GATE -- Yes --> LLM[Mistral via xKiro API]
-
+    WEB --> SEC[Security guardrails]
+    RAG --> GATE{Relevant private evidence?}
+    GATE -- No --> STOP[Stop and request KB evidence]
+    GATE -- Yes --> LLM[Mistral reasoning]
     SEC --> LLM
 
-    LLM --> SCORE[5 constrained score components]
-    SCORE --> PY[Deterministic Python total\n0-100]
+    LLM --> SCORE[5 score components]
+    SCORE --> PY[Python validates + totals]
+    PY --> ROUTE{Score >= threshold?}
+    ROUTE -- No --> STORE[Store result]
+    ROUTE -- Yes --> DRAFT[Draft outreach]
+    DRAFT --> HITL[Human approval]
+    HITL -- Reject --> STORE
+    HITL -- Approve --> GMAIL[Gmail send]
 
-    PY --> ROUTE{Score >= 60?}
-    ROUTE -- No --> END1[Store result / no outreach]
-    ROUTE -- Yes --> DRAFT[Personalized outreach draft]
-
-    DRAFT --> HITL[Human approval interrupt]
-    HITL -- Reject --> END2[Rejected / stored]
-    HITL -- Approve --> GMAIL[Gmail delivery]
-
-    LG --> OBS[Observability + audit events]
+    LG --> OBS[Observability / audit events]
 ```
 
----
+For a deeper technical walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Agent workflow
-
-The main workflow is:
+## Workflow
 
 ```text
-Check business memory
-        ↓
-Research prospect on the public web
-        ↓
-Retrieve relevant private company knowledge
-        ↓
-Require relevant private RAG evidence
-        ↓
-Mistral analyzes public + private evidence
-        ↓
-Generate 5 constrained score components
-        ↓
-Python validates and sums score to 0-100
-        ↓
-If score >= 60, draft outreach
-        ↓
+Business memory
+      |
+Live web research
+      |
+Private knowledge retrieval
+      |
+Relevant RAG evidence gate
+      |
+Mistral analysis
+      |
+Five constrained score components
+      |
+Deterministic Python total
+      |
+Route by threshold
+      |
+Outreach draft
+      |
 Human approval
-        ↓
+      |
 Send or reject
 ```
 
-The hard RAG gate is important. If semantic retrieval returns no relevant internal evidence, the workflow stops before Mistral performs seller-prospect fit analysis. This prevents the system from inventing what the seller can offer.
-
----
-
 ## Lead scoring
 
-Each prospect receives five component scores from **0 to 20**:
+Each criterion is constrained to **0-20**:
 
-| Component | Meaning |
-|---|---|
-| Industry fit | How relevant the prospect's industry is to the seller's capabilities |
-| Company size fit | Whether the organization appears suitable for the offering |
-| AI need | Strength of evidence that the prospect has an AI/data/automation need |
-| Growth signal | Evidence of investment, expansion, transformation, hiring, or strategic growth |
-| Contact potential | Practical likelihood of identifying an appropriate outreach path |
+- industry fit
+- company-size fit
+- AI need
+- growth signal
+- contact potential
 
-The LLM provides constrained component assessments. Python validates the values and calculates the total:
+The LLM assesses the evidence for each component. Python validates the allowed range and calculates the final score out of 100. The current outreach threshold is 60.
 
-```text
-Lead Score =
-industry_fit
-+ company_size_fit
-+ ai_need
-+ growth_signal
-+ contact_potential
-```
+## RAG and Knowledge Base
 
-Maximum score: **100**
+The Knowledge Base represents the **seller's own services and capabilities**.
 
-Current outreach threshold: **60**
+Supported content includes TXT, Markdown, and PDF. Documents are chunked, embedded with `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions), stored in PostgreSQL with pgvector, and retrieved by semantic similarity.
 
-This means the reasoning component is model-assisted, while the final arithmetic is deterministic.
+The UI supports:
 
----
+- upload and indexing
+- document listing
+- TXT/MD editing
+- automatic re-embedding after edits
+- deletion
+- inspection of retrieved chunks during agent execution
 
-## RAG design
+## Security model
 
-The Knowledge Base represents the **seller's private company knowledge**, not the prospect.
+Public web pages and retrieved text are treated as **data, not instructions**. The application includes prompt-injection detection, evidence isolation, deterministic action checks, authenticated routes, role-aware Knowledge Base mutations, and human approval before email delivery.
 
-Supported document types include:
+See [SECURITY.md](SECURITY.md) for the threat model and controls.
 
-- TXT
-- Markdown
-- PDF
+## Tech stack
 
-Documents are chunked and embedded using:
+**AI / orchestration:** LangGraph, Mistral, Tavily, sentence-transformers  
+**Backend:** Python 3.11, FastAPI, SQLAlchemy  
+**Data:** PostgreSQL 18, pgvector  
+**Frontend:** React 19, TypeScript, Vite, Axios, Recharts  
+**Actions:** Gmail API with approval-gated send path  
+**Infrastructure:** Docker, Docker Compose, Nginx, GitHub Actions, GHCR
 
-```text
-sentence-transformers/all-MiniLM-L6-v2
-Embedding dimension: 384
-```
+## Quick start
 
-Embeddings are stored in PostgreSQL with **pgvector** and retrieved through semantic similarity search.
-
-Typical private documents include:
-
-- service descriptions
-- AI capabilities
-- case studies
-- pricing guidance
-- sales playbooks
-- delivery constraints
-- positioning notes
-
-The dashboard supports document upload, inspection, editing and re-indexing for editable text formats, and deletion.
-
----
-
-## AI components
-
-### Mistral
-
-Mistral is the primary reasoning model. It:
-
-- analyzes prospect evidence
-- combines public research with private RAG context
-- proposes constrained scoring components
-- identifies relevant seller capabilities
-- drafts personalized outreach
-
-### LangGraph
-
-LangGraph orchestrates the agent. It manages:
-
-- workflow state
-- node execution
-- conditional routing
-- persistence/checkpointing
-- human approval interrupts
-- workflow resumption
-
-### Hugging Face embeddings
-
-The sentence-transformer model is used only for vector embeddings and semantic retrieval. It is **not** the main reasoning model.
-
-A concise architecture explanation is:
-
-> LangGraph orchestrates the agent, Hugging Face generates embeddings for RAG retrieval, pgvector finds relevant internal knowledge, and Mistral reasons over the retrieved private knowledge together with public Tavily research.
-
----
-
-## Security and safety design
-
-The application includes multiple defensive layers around external and model-generated content.
-
-Implemented controls include:
-
-- prompt-injection detection for untrusted web evidence
-- neutralization / warning behavior based on detected risk
-- protected authentication routes
-- role-aware Knowledge Base mutations
-- server-side workflow validation
-- human approval before outbound email
-- send-path safeguards and idempotency
-- explicit separation between public web evidence and private internal knowledge
-- no seller-prospect fit scoring when private evidence is missing
-
-The system treats web research as **untrusted data**, not as instructions to the agent.
-
----
-
-## Technology stack
-
-### Backend
-
-- Python 3.11
-- FastAPI
-- LangGraph
-- SQLAlchemy
-- PostgreSQL 18
-- pgvector
-- sentence-transformers
-- Mistral through an OpenAI-compatible xKiro endpoint
-- Tavily
-- Gmail API
-
-### Frontend
-
-- React 19
-- TypeScript
-- Vite
-- Axios
-- Recharts
-- Lucide React
-
-### Infrastructure
-
-- Docker
-- Docker Compose
-- Nginx frontend container
-- GitHub Actions
-- GitHub Container Registry workflow
-- Cloudflare Quick Tunnel for temporary public demonstrations
-
----
-
-## Local setup with Docker
-
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
 git clone https://github.com/mishal913/autonomous-ai-employee.git
 cd autonomous-ai-employee
 ```
 
-### 2. Configure Docker database credentials
+### 2. Create local environment files
 
-Copy:
-
-```text
-.env.docker.example
-```
-
-to:
+Copy the templates:
 
 ```text
-.env.docker
+.env.example        -> .env
+.env.docker.example -> .env.docker
 ```
 
-and set a local PostgreSQL password.
+Replace every `CHANGE_ME` value locally. Never commit real credentials.
 
-### 3. Configure application environment
-
-Create a local `.env` file containing the application configuration required by the backend, including values for services such as the LLM endpoint, Tavily, authentication, and optional Gmail integration.
-
-Do not commit local secret files.
-
-### 4. Build and start
+### 3. Start the stack
 
 ```bash
 docker compose --env-file .env.docker up -d --build
 ```
 
-### 5. Check containers
+### 4. Inspect services
 
 ```bash
 docker compose --env-file .env.docker ps -a
 ```
 
-Expected services include:
+Expected services:
 
 - `database`
-- `init-backend`
+- `init-backend` (one-shot initializer; successful exit is expected)
 - `backend`
 - `frontend`
 
-The one-shot `init-backend` service is expected to exit successfully after initializing SQLAlchemy and LangGraph checkpoint tables.
-
-### 6. Open the application
+Open the UI at:
 
 ```text
 http://localhost:8080
 ```
 
-The backend is also exposed locally on:
+Backend health/API:
 
 ```text
 http://localhost:8000
 ```
 
----
+## Development
 
-## Development workflow
-
-After changing backend or frontend code:
+After code or Dockerfile changes:
 
 ```bash
 docker compose --env-file .env.docker up -d --build
 ```
 
-Then test locally.
-
-When the change is ready:
+Backend tests:
 
 ```bash
-git status
-git add .
-git commit -m "Describe the change"
-git push
+python -m pytest -q
 ```
 
-GitHub Actions automatically validates the pushed code.
+Frontend production build:
 
----
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and pull-request workflow.
 
 ## CI/CD
 
-The repository includes GitHub Actions workflows for continuous integration.
+GitHub Actions validates the repository on pushes and pull requests:
 
-Current CI checks include:
-
-- backend test suite against PostgreSQL + pgvector
-- frontend TypeScript/Vite production build
+- backend tests against PostgreSQL + pgvector
+- frontend TypeScript/Vite build
+- backend Docker image build
 - frontend Docker image build
 
-A separate image-publishing workflow can publish backend and frontend container images to **GitHub Container Registry (GHCR)** for version tags.
+A separate workflow publishes tagged backend and frontend images to GitHub Container Registry.
 
----
-
-## Project structure
+## Repository structure
 
 ```text
-autonomous-ai-employee/
-├── app/
-│   ├── main.py
-│   ├── workflow.py
-│   ├── rag.py
-│   ├── ai.py
-│   ├── tools.py
-│   ├── security_guardrails.py
-│   ├── secure_tools.py
-│   ├── observability.py
-│   ├── auth.py
-│   ├── knowledge_api.py
-│   ├── knowledge_admin.py
-│   ├── gmail_client.py
-│   └── ...
-├── frontend/
-│   ├── src/
-│   └── Dockerfile
-├── evaluation/
-│   └── rag_test_cases.json
-├── tests/
-├── docker/
-│   └── postgres/
-├── .github/
-│   └── workflows/
+.
+├── app/                    # FastAPI, LangGraph, RAG, security, auth, Gmail
+├── frontend/               # React + TypeScript dashboard
+├── evaluation/             # RAG evaluation cases
+├── tests/                  # Backend tests
+├── docker/                 # Database initialization
+├── docs/                   # Architecture documentation
+├── .github/workflows/      # CI and image publishing
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
 └── requirements.lock.txt
 ```
 
----
+## Engineering decisions
 
-## Design decisions
+**Why LangGraph?** The workflow needs persistence, branching, interruption, resumption, and explicit state transitions.
 
-### Why require private RAG evidence?
+**Why deterministic scoring?** The model interprets evidence, but Python owns range validation and final arithmetic.
 
-Public research can show that a prospect has an AI need, but it cannot prove that the seller has a capability that addresses that need.
+**Why a hard RAG gate?** Prospect evidence can establish need; it cannot establish the seller's capability. Private evidence is required before fit scoring.
 
-The workflow therefore requires relevant internal evidence before producing a seller-prospect fit score.
-
-### Why use deterministic scoring after the LLM?
-
-The model is useful for evidence interpretation, but the final total should be transparent and reproducible. Each component is constrained to 0-20 and Python performs the final calculation.
-
-### Why keep human approval?
-
-Outbound communication is a consequential external action. The agent can research, reason, score, and draft autonomously, but the final email action remains under human control.
-
-### Why LangGraph?
-
-The workflow requires state, branching, persistence, interruption, and resumption. Those requirements are more naturally modeled as a graph than as a single prompt chain.
-
----
-
-## Example use case
-
-A user enters a prospect such as a large industrial company.
-
-The agent:
-
-1. searches the public web for current business and AI-related evidence,
-2. retrieves internal documents describing the seller's relevant AI services,
-3. verifies that private evidence exists,
-4. asks Mistral to connect the prospect's need to supported seller capabilities,
-5. calculates the opportunity score,
-6. drafts a personalized email when the threshold is met,
-7. pauses for human review,
-8. sends only after approval.
-
----
+**Why human approval?** Research and drafting can be automated, while consequential outbound communication remains under human control.
 
 ## Current status
 
-The application has been tested end-to-end locally in Docker, including:
+The application has been exercised end-to-end with authentication, live research, private retrieval, missing-knowledge blocking, scoring, outreach drafting, Knowledge Base CRUD, human approval, PostgreSQL persistence, Dockerized services, observability, and CI.
 
-- authentication
-- public company research
-- private RAG retrieval
-- missing-knowledge blocking
-- lead scoring
-- outreach generation
-- Knowledge Base editing/deletion
-- human approval flow
-- frontend/backend integration
-- PostgreSQL persistence
-- CI validation
+Portfolio screenshots will be added under `docs/screenshots/`.
 
----
+## Future extensions
 
-## Portfolio focus
-
-This project demonstrates practical experience with:
-
-- agentic AI architecture
-- LLM application engineering
-- RAG
-- vector databases
-- prompt-injection defense
-- workflow orchestration
-- human-in-the-loop systems
-- full-stack development
-- API integration
-- Docker
-- CI/CD
-- applied AI product design
-
----
-
-## Planned portfolio additions
-
-- polished application screenshots
-- short architecture walkthrough
-- end-to-end demo video
-- example anonymized prospect run
-- expanded evaluation results
-
----
-
-## Project note
-
-Built as a portfolio project exploring how autonomous AI agents can combine private enterprise knowledge, public research, deterministic business logic, and human oversight in a real workflow.
+- CRM integration
+- MCP-based tool adapters
+- richer lead/contact enrichment
+- expanded RAG evaluation
+- durable production deployment with a stable domain
+- model and retrieval telemetry dashboards

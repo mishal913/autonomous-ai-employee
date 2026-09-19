@@ -7,6 +7,9 @@ on:
       - master
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -84,8 +87,7 @@ jobs:
             -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
       - name: Run backend tests
-        run: |
-          python -m pytest -q
+        run: python -m pytest -q
 
 
   frontend-build:
@@ -116,6 +118,20 @@ jobs:
         run: npm run build
 
 
+  docker-backend-build:
+    name: Backend Docker build
+    runs-on: ubuntu-latest
+    needs:
+      - backend-tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend Docker image
+        run: docker build -t autonomous-ai-backend:ci .
+
+
   docker-frontend-build:
     name: Frontend Docker build
     runs-on: ubuntu-latest
@@ -132,5 +148,3 @@ jobs:
             --build-arg VITE_API_BASE_URL=/api \
             -t autonomous-ai-frontend:ci \
             ./frontend
-
-
