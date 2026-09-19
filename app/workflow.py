@@ -65,6 +65,15 @@ MAX_ANALYSIS_ATTEMPTS = 3
 
 RAG_RESULT_LIMIT = 5
 
+KNOWLEDGE_REQUIRED_MESSAGE = (
+    "No relevant private company knowledge was retrieved. "
+    "The AI employee cannot calculate a seller-prospect fit score "
+    "without evidence about our own services and capabilities. "
+    "Please open the Knowledge Base and upload or improve documents "
+    "describing our services, capabilities, case studies, pricing, "
+    "or sales playbook, then run the task again."
+)
+
 
 # ============================================================
 # LANGGRAPH STATE
@@ -648,8 +657,14 @@ Retrieve internal company knowledge useful for:
         "success"
     ):
 
+        error_message = (
+            "Private knowledge retrieval failed, so the workflow "
+            "cannot continue safely. "
+            f"Details: {result.get('error', 'Unknown RAG error.')}"
+        )
+
         print(
-            "[GRAPH] WARNING: "
+            "[GRAPH] ERROR: "
             "RAG retrieval failed"
         )
 
@@ -664,19 +679,15 @@ Retrieve internal company knowledge useful for:
                     result.get(
                         "error"
                     ),
+
+                "workflow_blocked":
+                    True,
             },
         )
 
-        # Do not kill whole workflow.
-        return {
-            "internal_knowledge": [],
-
-            "rag_security_summary":
-                result.get(
-                    "_security",
-                    {},
-                ),
-        }
+        raise RuntimeError(
+            error_message
+        )
 
     rag_security_summary = result.get(
         "_security",
@@ -725,6 +736,47 @@ Retrieve internal company knowledge useful for:
         f"[GRAPH] Retrieved "
         f"{len(knowledge)} private chunks"
     )
+
+    # ========================================================
+    # HARD PRIVATE-KNOWLEDGE GATE
+    # ========================================================
+    #
+    # A seller-prospect fit score is only meaningful when the
+    # workflow has BOTH:
+    #   1) public evidence about the prospect, and
+    #   2) private evidence about what our company can provide.
+    #
+    # Never allow Mistral, scoring, drafting, approval or Gmail
+    # to run when no relevant private knowledge was retrieved.
+
+    if not knowledge:
+
+        print(
+            "[GRAPH] WORKFLOW BLOCKED — "
+            "PRIVATE KNOWLEDGE REQUIRED"
+        )
+
+        log_event(
+            "workflow_knowledge_required",
+            {
+                **trace_metadata(
+                    state
+                ),
+
+                "results_count":
+                    0,
+
+                "reason":
+                    "no_relevant_internal_knowledge",
+
+                "message":
+                    KNOWLEDGE_REQUIRED_MESSAGE,
+            },
+        )
+
+        raise RuntimeError(
+            KNOWLEDGE_REQUIRED_MESSAGE
+        )
 
     sources = []
 
@@ -824,6 +876,29 @@ def analyze_node(
         "\n[GRAPH] Analyzing public + "
         "private evidence"
     )
+
+    # Defense in depth: even if graph routing changes later,
+    # the LLM must never qualify a seller-prospect match without
+    # private company evidence.
+    if not state.get(
+        "internal_knowledge"
+    ):
+
+        log_event(
+            "workflow_analysis_blocked_missing_knowledge",
+            {
+                **trace_metadata(
+                    state
+                ),
+
+                "message":
+                    KNOWLEDGE_REQUIRED_MESSAGE,
+            },
+        )
+
+        raise RuntimeError(
+            KNOWLEDGE_REQUIRED_MESSAGE
+        )
 
     client = get_client()
 

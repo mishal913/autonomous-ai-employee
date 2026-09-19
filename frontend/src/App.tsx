@@ -372,6 +372,21 @@ function isEditableKnowledge(filename?: string) {
   return lower.endsWith(".txt") || lower.endsWith(".md");
 }
 
+function getTaskError(run?: LiveWorkflowResponse | null) {
+  const value = run?.task?.error;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isKnowledgeRequiredError(message?: string | null) {
+  const lower = (message ?? "").toLowerCase();
+
+  return (
+    lower.includes("private company knowledge") ||
+    lower.includes("knowledge base") ||
+    lower.includes("no relevant private")
+  );
+}
+
 
 function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
@@ -427,16 +442,26 @@ function App() {
       const documentsRequest = api
         .get("/knowledge")
         .then((response) => {
-          if (Array.isArray(response.data?.documents)) {
-            setDocuments(response.data.documents);
-          } else if (Array.isArray(response.data)) {
-            setDocuments(response.data);
-          } else {
-            setDocuments([]);
-          }
-        })
-        .catch(() => setDocuments([]));
+      const rawDocuments = Array.isArray(response.data?.documents)
+        ? response.data.documents
+        : Array.isArray(response.data)
+        ? response.data
+        : [];
 
+      const normalizedDocuments: KnowledgeDocument[] = rawDocuments.map(
+         (item: any) => ({
+         id: item.id ?? item.document_id,
+         filename: item.filename,
+         document_type: item.document_type,
+         source_path: item.source_path,
+         created_at: item.created_at,
+         chunk_count: item.chunk_count ?? item.chunks ?? 0,
+      })
+    );
+
+      setDocuments(normalizedDocuments);
+  })
+   .catch(() => setDocuments([]));
       await Promise.all([
         healthRequest,
         summaryRequest,
@@ -619,7 +644,7 @@ function App() {
   };
 
   const openEditDocument = async (documentItem: KnowledgeDocument) => {
-    if (!documentItem.id) return;
+    if (documentItem.id === null || documentItem.id === undefined) return;
 
     setKnowledgeError(null);
     setKnowledgeMessage(null);
@@ -647,7 +672,7 @@ function App() {
   };
 
   const saveEditedDocument = async () => {
-    if (!editingDocument?.id) return;
+    if (editingDocument?.id === null || editingDocument?.id === undefined) return;
 
     setSaveLoading(true);
     setKnowledgeError(null);
@@ -674,7 +699,7 @@ function App() {
   };
 
   const deleteDocument = async (documentItem: KnowledgeDocument) => {
-    if (!documentItem.id) return;
+    if (documentItem.id === null || documentItem.id === undefined) return;
 
     const confirmed = window.confirm(
       `Delete ${documentItem.filename ?? "this document"}?\n\n` +
@@ -688,8 +713,17 @@ function App() {
     setKnowledgeMessage(null);
 
     try {
-      await api.delete(`/knowledge/${documentItem.id}`);
-      setKnowledgeMessage(`${documentItem.filename ?? "Document"} deleted.`);
+      const response = await api.delete(`/knowledge/${documentItem.id}`);
+
+      setDocuments((current) =>
+        current.filter((item) => item.id !== documentItem.id)
+      );
+
+      setKnowledgeMessage(
+        response.data?.message ??
+          `${documentItem.filename ?? "Document"} deleted successfully.`
+      );
+
       await loadAppData();
     } catch (error: any) {
       setKnowledgeError(
@@ -1020,15 +1054,20 @@ function LivePipeline({
     );
   }
 
+  const taskError = getTaskError(run);
+  const knowledgeRequired = isKnowledgeRequiredError(taskError);
+
   const currentStepLabel =
-    steps.find((step) => step.status === "running")?.label ??
-    (run.status === "awaiting_approval"
-      ? "Human approval"
-      : run.status === "completed"
-        ? "Workflow completed"
-        : run.status === "failed"
-          ? "Workflow failed"
-          : "Preparing workflow");
+    knowledgeRequired
+      ? "Knowledge Base documents required"
+      : steps.find((step) => step.status === "running")?.label ??
+        (run.status === "awaiting_approval"
+          ? "Human approval"
+          : run.status === "completed"
+            ? "Workflow completed"
+            : run.status === "failed"
+              ? "Workflow stopped"
+              : "Preparing workflow");
 
   return (
     <div className="live-pipeline">
@@ -1051,7 +1090,9 @@ function LivePipeline({
         </LiveStepCard>
       ))}
 
-      <ServicesCard services={trace?.recommended_services ?? []} />
+      {!knowledgeRequired && (
+        <ServicesCard services={trace?.recommended_services ?? []} />
+      )}
 
       {run.status === "awaiting_approval" && (
         <div className="approval-console">
@@ -1090,7 +1131,10 @@ function LivePipeline({
       {run.status === "failed" && (
         <div className="error-box">
           <AlertTriangle size={17} />
-          Workflow failed. Open the failed step or Observability for the recorded error.
+          <span>
+            {taskError ||
+              "Workflow stopped safely. Open Observability for the recorded error."}
+          </span>
         </div>
       )}
     </div>
@@ -1206,7 +1250,15 @@ function StepActualData({
         ))}
       </div>
     ) : (
-      <div className="waiting-copy">No RAG results recorded yet.</div>
+      <div className={
+        isKnowledgeRequiredError(getTaskError(run))
+          ? "soft-warning"
+          : "waiting-copy"
+      }>
+        {isKnowledgeRequiredError(getTaskError(run))
+          ? getTaskError(run)
+          : "No private RAG knowledge has been retrieved yet."}
+      </div>
     );
   }
 
@@ -1446,6 +1498,7 @@ function KnowledgeView({
 
                 <div className="knowledge-actions">
                   <button
+                    type="button"
                     className="edit-button"
                     disabled={!editable || editLoading}
                     title={editable ? "Edit and rebuild embeddings" : "PDF inline editing is disabled. Delete and upload a replacement."}
@@ -1454,8 +1507,10 @@ function KnowledgeView({
                     <Edit3 size={15} /> Edit
                   </button>
                   <button
+                    type="button"
                     className="delete-button"
                     disabled={deleting}
+                    title="Delete this document and its indexed vector chunks"
                     onClick={() => void deleteDocument(documentItem)}
                   >
                     {deleting ? <RefreshCw size={15} className="spinning" /> : <Trash2 size={15} />}
