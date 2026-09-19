@@ -40,7 +40,7 @@ jobs:
 
       - name: Generate backend image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/autonomous-ai-backend
           tags: |
@@ -85,7 +85,7 @@ jobs:
 
       - name: Generate frontend image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/autonomous-ai-frontend
           tags: |
